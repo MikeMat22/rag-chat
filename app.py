@@ -24,40 +24,19 @@ LLM_MODEL = "llama-3.3-70b-versatile"
 # PAGE SETUP
 # ==============================================================================
 st.set_page_config(
-    page_title="Document Q&A",
-    page_icon="📄",
-    layout="wide"
+    page_title="DocMind",
+    page_icon="◆",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS for clean look
-st.markdown("""
-<style>
-    .stApp {
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-    .upload-box {
-        border: 2px dashed #ccc;
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    .stats-box {
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 10px 0;
-    }
-    .source-box {
-        background-color: #f1f3f4;
-        border-left: 3px solid #1a73e8;
-        padding: 10px;
-        margin: 5px 0;
-        font-size: 0.9em;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Load external CSS
+def load_css(file_path):
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+load_css("style.css")
+
 
 # ==============================================================================
 # SESSION STATE
@@ -86,7 +65,6 @@ if "total_chunks" not in st.session_state:
 # HELPER FUNCTIONS
 # ==============================================================================
 def extract_text_from_pdf(file) -> str:
-    """Extract text from uploaded PDF file."""
     try:
         reader = PdfReader(file)
         text = ""
@@ -101,23 +79,20 @@ def extract_text_from_pdf(file) -> str:
 
 
 def extract_text_from_txt(file) -> str:
-    """Extract text from uploaded TXT file."""
     try:
         return file.read().decode("utf-8")
     except Exception as e:
-        st.error(f"Failed to read TXT file: {str(e)}")
+        st.error(f"Failed to read file: {str(e)}")
         return ""
 
 
 def get_file_hash(file) -> str:
-    """Generate hash for file to track duplicates."""
     content = file.read()
     file.seek(0)
     return hashlib.md5(content).hexdigest()[:8]
 
 
 def process_documents(files) -> tuple[list[str], list[dict]]:
-    """Process uploaded files and return chunks with metadata."""
     all_text = ""
     file_info = []
     
@@ -132,7 +107,7 @@ def process_documents(files) -> tuple[list[str], list[dict]]:
             file_type = "TXT"
         elif file.name.endswith(".md"):
             text = extract_text_from_txt(file)
-            file_type = "Markdown"
+            file_type = "MD"
         else:
             continue
             
@@ -161,19 +136,16 @@ def process_documents(files) -> tuple[list[str], list[dict]]:
 
 @st.cache_resource
 def get_embeddings():
-    """Get cached embedding model."""
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
 
 def init_pinecone():
-    """Initialize Pinecone client and create index if needed."""
     api_key = os.getenv("PINECONE_API_KEY")
     if not api_key:
-        st.error("Pinecone API key not found. Please set PINECONE_API_KEY in .env file.")
+        st.error("Pinecone API key not configured.")
         return None
         
     pc = Pinecone(api_key=api_key)
-    
     existing_indexes = [idx.name for idx in pc.list_indexes()]
     
     if PINECONE_INDEX_NAME not in existing_indexes:
@@ -181,17 +153,13 @@ def init_pinecone():
             name=PINECONE_INDEX_NAME,
             dimension=384,
             metric="cosine",
-            spec=ServerlessSpec(
-                cloud="aws",
-                region="us-east-1"
-            )
+            spec=ServerlessSpec(cloud="aws", region="us-east-1")
         )
     
     return pc.Index(PINECONE_INDEX_NAME)
 
 
 def create_vector_store(chunks: list[str]):
-    """Create Pinecone vector store from text chunks."""
     embeddings = get_embeddings()
     index = init_pinecone()
     
@@ -208,10 +176,9 @@ def create_vector_store(chunks: list[str]):
 
 
 def get_conversation_chain(vector_store):
-    """Create conversational retrieval chain."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        st.error("Groq API key not found. Please set GROQ_API_KEY in .env file.")
+        st.error("Groq API key not configured.")
         return None
         
     llm = ChatGroq(
@@ -231,7 +198,6 @@ def get_conversation_chain(vector_store):
 
 
 def clear_pinecone_index():
-    """Delete all vectors from the index."""
     try:
         pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         index = pc.Index(PINECONE_INDEX_NAME)
@@ -241,57 +207,66 @@ def clear_pinecone_index():
 
 
 # ==============================================================================
-# MAIN UI
+# SIDEBAR
 # ==============================================================================
-st.title("Document Q&A")
-st.caption("Upload documents and ask questions about their content")
-
-# Sidebar
 with st.sidebar:
-    st.header("Documents")
+    st.markdown('<div class="brand-title">DocMind</div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-subtitle">Intelligent Document Analysis</div>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="section-header">Upload</div>', unsafe_allow_html=True)
     
     uploaded_files = st.file_uploader(
-        "Upload files",
+        "Drop files here",
         type=["pdf", "txt", "md"],
         accept_multiple_files=True,
-        help="Supported formats: PDF, TXT, Markdown"
+        label_visibility="collapsed"
     )
     
     if uploaded_files:
         if st.button("Process Documents", type="primary", use_container_width=True):
             with st.status("Processing...", expanded=True) as status:
-                st.write("Extracting text from documents...")
+                st.write("Extracting content...")
                 chunks, file_info = process_documents(uploaded_files)
                 
                 if not chunks:
-                    st.error("No text could be extracted from the uploaded files.")
+                    st.error("No content could be extracted.")
                 else:
-                    st.write(f"Created {len(chunks)} text chunks")
-                    st.write("Generating embeddings and storing in database...")
-                    
+                    st.write(f"Creating {len(chunks)} vectors...")
                     vector_store = create_vector_store(chunks)
                     
                     if vector_store:
                         st.session_state.vector_store = vector_store
                         st.session_state.processed_files = file_info
                         st.session_state.total_chunks = len(chunks)
-                        status.update(label="Processing complete", state="complete")
+                        status.update(label="Ready", state="complete")
                     else:
-                        status.update(label="Processing failed", state="error")
+                        status.update(label="Failed", state="error")
     
-    # Show processed files
     if st.session_state.processed_files:
-        st.divider()
-        st.subheader("Processed Files")
+        st.markdown('<div class="section-header">Documents</div>', unsafe_allow_html=True)
         
         for f in st.session_state.processed_files:
-            st.text(f"{f['name']}")
-            st.caption(f"{f['type']} | {f['size']}")
+            st.markdown(f'''
+                <div class="file-item">
+                    <div class="file-name">{f['name']}</div>
+                    <div class="file-meta">{f['type']} · {f['size']}</div>
+                </div>
+            ''', unsafe_allow_html=True)
         
-        st.divider()
-        st.caption(f"Total chunks: {st.session_state.total_chunks}")
+        st.markdown(f'''
+            <div class="stats-container">
+                <div class="stat-box">
+                    <div class="stat-value">{len(st.session_state.processed_files)}</div>
+                    <div class="stat-label">Files</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{st.session_state.total_chunks}</div>
+                    <div class="stat-label">Chunks</div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
     
-    st.divider()
+    st.markdown('<div class="section-header">Actions</div>', unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
@@ -301,7 +276,7 @@ with st.sidebar:
             st.rerun()
     
     with col2:
-        if st.button("Clear All", use_container_width=True):
+        if st.button("Reset All", use_container_width=True):
             clear_pinecone_index()
             st.session_state.vector_store = None
             st.session_state.messages = []
@@ -309,50 +284,51 @@ with st.sidebar:
             st.session_state.processed_files = []
             st.session_state.total_chunks = 0
             st.rerun()
-    
-    st.divider()
-    st.caption("Built with LangChain, Pinecone, and Groq")
 
 
 # ==============================================================================
-# CHAT INTERFACE
+# MAIN CONTENT
 # ==============================================================================
-
-# Show placeholder if no documents
 if st.session_state.vector_store is None:
-    st.info("Upload and process documents to start asking questions.")
+    st.markdown("""
+        <div class="welcome-container">
+            <div class="welcome-icon">◆</div>
+            <h1>DocMind</h1>
+            <p class="welcome-text">
+                Upload your documents and start asking questions. 
+                Your data is processed securely and never stored permanently.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+else:
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+            if message["role"] == "assistant" and "sources" in message:
+                with st.expander("View sources"):
+                    for i, source in enumerate(message["sources"], 1):
+                        st.markdown(
+                            f'<div class="source-item"><strong>Source {i}</strong><br>{source[:400]}...</div>', 
+                            unsafe_allow_html=True
+                        )
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        
-        if message["role"] == "assistant" and "sources" in message:
-            with st.expander("View sources"):
-                for i, source in enumerate(message["sources"], 1):
-                    st.markdown(f"**Source {i}:**")
-                    st.markdown(f'<div class="source-box">{source[:500]}...</div>', 
-                               unsafe_allow_html=True)
-
-# Chat input
-if prompt := st.chat_input("Ask a question about your documents"):
+if prompt := st.chat_input("Ask a question about your documents..."):
     
     if st.session_state.vector_store is None:
         st.warning("Please upload and process documents first.")
     else:
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Get AI response
         with st.chat_message("assistant"):
             chain = get_conversation_chain(st.session_state.vector_store)
             
             if chain is None:
-                st.error("Failed to initialize the conversation chain.")
+                st.error("Failed to initialize.")
             else:
-                with st.spinner("Searching documents..."):
+                with st.spinner(""):
                     try:
                         response = chain.invoke({"question": prompt})
                         answer = response["answer"]
@@ -362,11 +338,11 @@ if prompt := st.chat_input("Ask a question about your documents"):
                         
                         with st.expander("View sources"):
                             for i, source in enumerate(sources, 1):
-                                st.markdown(f"**Source {i}:**")
-                                st.markdown(f'<div class="source-box">{source[:500]}...</div>', 
-                                           unsafe_allow_html=True)
+                                st.markdown(
+                                    f'<div class="source-item"><strong>Source {i}</strong><br>{source[:400]}...</div>', 
+                                    unsafe_allow_html=True
+                                )
                         
-                        # Save message with sources
                         st.session_state.messages.append({
                             "role": "assistant", 
                             "content": answer,
@@ -374,5 +350,4 @@ if prompt := st.chat_input("Ask a question about your documents"):
                         })
                         
                     except Exception as e:
-                        error_msg = str(e)
-                        st.error(f"Error: {error_msg}")
+                        st.error(f"Error: {str(e)}")
